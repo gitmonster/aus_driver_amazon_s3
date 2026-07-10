@@ -17,11 +17,11 @@ namespace AUS\AusDriverAmazonS3\Service;
 
 use AUS\AusDriverAmazonS3\Driver\AmazonS3Driver;
 use AUS\AusDriverAmazonS3\Index\Extractor;
-use TYPO3\CMS\Core\Resource\AbstractFile;
 use TYPO3\CMS\Core\Resource\Exception\InvalidUidException;
+use TYPO3\CMS\Core\Resource\FileType;
 use TYPO3\CMS\Core\Resource\Index\MetaDataRepository;
-use TYPO3\CMS\Core\Resource\ResourceFactory;
 use TYPO3\CMS\Core\Resource\ResourceStorage;
+use TYPO3\CMS\Core\Resource\StorageRepository;
 use TYPO3\CMS\Core\SingletonInterface;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
@@ -35,7 +35,7 @@ class MetaDataUpdateService implements SingletonInterface
      */
     public function updateMetadata(array $fileProperties): void
     {
-        if ($fileProperties['type'] !== AbstractFile::FILETYPE_IMAGE) {
+        if ($fileProperties['type'] !== FileType::IMAGE->value) {
             return;
         }
 
@@ -65,9 +65,8 @@ class MetaDataUpdateService implements SingletonInterface
 
     protected function getStorage(int $uid): ResourceStorage
     {
-        $resourceFactory = GeneralUtility::makeInstance(ResourceFactory::class);
-        assert($resourceFactory instanceof ResourceFactory);
-        return $resourceFactory->getStorageObject($uid);
+        $storageRepository = GeneralUtility::makeInstance(StorageRepository::class);
+        return $storageRepository->getStorageObject($uid);
     }
 
     protected function getExtractor(): Extractor
