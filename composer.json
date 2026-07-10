@@ -16,6 +16,7 @@
   "require-dev": {
     "pluswerk/grumphp-config": "^11.0",
     "typo3/testing-framework": "^9.0",
+    "phpunit/phpunit": "^11.5",
     "phpspec/prophecy": "^1.22.0",
     "phpspec/prophecy-phpunit": "^2.4.0",
     "saschaegerer/phpstan-typo3": "^3.0",
@@ -54,7 +55,7 @@
     ],
     "test": [
       "@setupTest",
-      "./Build/Scripts/runTests.sh -p '8.2' -s composerInstall && ./Build/Scripts/runTests.sh -p '8.2' -s composerValidate && ./Build/Scripts/runTests.sh -p '8.2' -s unit && ./Build/Scripts/runTests.sh -p '8.2' -s lint"
+      "./Build/Scripts/runTests.sh -p '8.3' -s composerInstall && ./Build/Scripts/runTests.sh -p '8.3' -s composerValidate && ./Build/Scripts/runTests.sh -p '8.3' -s unit && ./Build/Scripts/runTests.sh -p '8.3' -s lint"
     ]
   },
   "extra": {
