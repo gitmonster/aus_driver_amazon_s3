@@ -26,11 +26,14 @@ use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Cache\Frontend\FrontendInterface;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
 use TYPO3\CMS\Core\Core\Environment;
+use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\Response;
 use TYPO3\CMS\Core\Log\LogLevel;
 use TYPO3\CMS\Core\Log\LogManager;
 use TYPO3\CMS\Core\Messaging\FlashMessage;
 use TYPO3\CMS\Core\Messaging\FlashMessageService;
+use TYPO3\CMS\Core\Page\PageRenderer;
+use TYPO3\CMS\Core\Resource\Capabilities;
 use TYPO3\CMS\Core\Resource\Driver\AbstractHierarchicalFilesystemDriver;
 use TYPO3\CMS\Core\Resource\Driver\StreamableDriverInterface;
 use TYPO3\CMS\Core\Resource\Exception;
@@ -39,11 +42,11 @@ use TYPO3\CMS\Core\Resource\Folder;
 use TYPO3\CMS\Core\Resource\ResourceStorage;
 use TYPO3\CMS\Core\Resource\ResourceStorageInterface;
 use TYPO3\CMS\Core\Resource\StorageRepository;
+use TYPO3\CMS\Core\Type\ContextualFeedbackSeverity;
 use TYPO3\CMS\Core\Utility\ExtensionManagementUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\PathUtility;
 use TYPO3\CMS\Extbase\Utility\LocalizationUtility;
-use TYPO3\CMS\Frontend\Controller\TypoScriptFrontendController;
 
 /**
  * Class AmazonS3Driver
@@ -190,11 +193,12 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         $this->eventDispatcher = $eventDispatcher ?? GeneralUtility::makeInstance(EventDispatcherInterface::class);
         $this->compatibilityService = GeneralUtility::makeInstance(CompatibilityService::class);
         // The capabilities default of this driver. See CAPABILITY_* constants for possible values
-        $this->capabilities =
-            ResourceStorage::CAPABILITY_BROWSABLE
-            | ResourceStorage::CAPABILITY_PUBLIC
-            | ResourceStorage::CAPABILITY_WRITABLE
-            | ResourceStorage::CAPABILITY_HIERARCHICAL_IDENTIFIERS;
+        $this->capabilities = new Capabilities(
+            Capabilities::CAPABILITY_BROWSABLE
+            | Capabilities::CAPABILITY_PUBLIC
+            | Capabilities::CAPABILITY_WRITABLE
+            | Capabilities::CAPABILITY_HIERARCHICAL_IDENTIFIERS
+        );
         $this->streamWrapperProtocol = 's3-' . substr(md5(uniqid()), 0, 7);
         $this->s3Client = $s3Client;
         $this->metaInfoCache = GeneralUtility::makeInstance(CacheManager::class)->getCache('ausdriveramazons3_metainfocache');
@@ -217,14 +221,14 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     /**
      * @return void
      */
-    public function processConfiguration()
+    public function processConfiguration(): void
     {
     }
 
     /**
      * @return void
      */
-    public function initialize()
+    public function initialize(): void
     {
         $this->initializeSettings()
             ->initializeClient();
@@ -241,7 +245,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier
      * @return string
      */
-    public function getPublicUrl($identifier)
+    public function getPublicUrl(string $identifier): ?string
     {
         $uriParts = GeneralUtility::trimExplode('/', ltrim($identifier, '/'), true);
         $uriParts = array_map('rawurlencode', $uriParts);
@@ -255,7 +259,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $hashAlgorithm
      * @return string
      */
-    public function hash($fileIdentifier, $hashAlgorithm)
+    public function hash(string $fileIdentifier, string $hashAlgorithm): string
     {
         if ($this->fileContentHash) {
             $result = $this->s3Client->headObject([
@@ -299,7 +303,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @return string
      */
-    public function getDefaultFolder()
+    public function getDefaultFolder(): string
     {
         return $this->getRootLevelFolder();
     }
@@ -309,7 +313,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @return string
      */
-    public function getRootLevelFolder()
+    public function getRootLevelFolder(): string
     {
         return '/';
     }
@@ -323,7 +327,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return array
      * @throws \InvalidArgumentException If the file does not exist
      */
-    public function getFileInfoByIdentifier($fileIdentifier, array $propertiesToExtract = [])
+    public function getFileInfoByIdentifier(string $fileIdentifier, array $propertiesToExtract = []): array
     {
         if (count($propertiesToExtract) === 0 || in_array('mimetype', $propertiesToExtract)) {
             // force to reload the infos from S3 if the mime type was requested
@@ -345,7 +349,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier
      * @return bool
      */
-    public function fileExists($identifier)
+    public function fileExists(string $identifier): bool
     {
         if (substr($identifier, -1) === '/' || $identifier === '') {
             return false;
@@ -359,7 +363,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier
      * @return bool
      */
-    public function folderExists($identifier)
+    public function folderExists(string $identifier): bool
     {
         if ($identifier === self::ROOT_FOLDER_IDENTIFIER) {
             return true;
@@ -375,7 +379,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $folderIdentifier
      * @return bool
      */
-    public function fileExistsInFolder($fileName, $folderIdentifier)
+    public function fileExistsInFolder(string $fileName, string $folderIdentifier): bool
     {
         return $this->objectExists(rtrim($folderIdentifier, '/') . '/' . $fileName);
     }
@@ -387,7 +391,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $folderIdentifier Parent folder
      * @return bool
      */
-    public function folderExistsInFolder($folderName, $folderIdentifier)
+    public function folderExistsInFolder(string $folderName, string $folderIdentifier): bool
     {
         $identifier = rtrim($folderIdentifier, '/') . '/' . $folderName;
         $this->normalizeFolderIdentifier($identifier);
@@ -401,7 +405,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $folderIdentifier
      * @return string
      */
-    public function getFolderInFolder($folderName, $folderIdentifier)
+    public function getFolderInFolder(string $folderName, string $folderIdentifier): string
     {
         $identifier = $folderIdentifier . '/' . $folderName;
         $this->normalizeFolderIdentifier($identifier);
@@ -417,7 +421,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return string the identifier of the new file
      * @throws \Exception
      */
-    public function addFile($localFilePath, $targetFolderIdentifier, $newFileName = '', $removeOriginal = true)
+    public function addFile(string $localFilePath, string $targetFolderIdentifier, string $newFileName = '', bool $removeOriginal = true): string
     {
         $newFileName = $this->sanitizeFileName($newFileName !== '' ? $newFileName : PathUtility::basename($localFilePath));
         $targetIdentifier = $targetFolderIdentifier . $newFileName;
@@ -467,7 +471,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @return string
      */
-    public function moveFileWithinStorage($fileIdentifier, $targetFolderIdentifier, $newFileName)
+    public function moveFileWithinStorage(string $fileIdentifier, string $targetFolderIdentifier, string $newFileName): string
     {
         $this->normalizeFolderIdentifier($targetFolderIdentifier);
         $targetIdentifier = $targetFolderIdentifier . $newFileName;
@@ -485,7 +489,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $fileName
      * @return string the Identifier of the new file
      */
-    public function copyFileWithinStorage($fileIdentifier, $targetFolderIdentifier, $fileName)
+    public function copyFileWithinStorage(string $fileIdentifier, string $targetFolderIdentifier, string $fileName): string
     {
         $targetIdentifier = $targetFolderIdentifier . $fileName;
         $this->copyObject($fileIdentifier, $targetIdentifier);
@@ -500,7 +504,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return bool TRUE if the operation succeeded
      * @throws \TYPO3\CMS\Extbase\Persistence\Generic\Exception\NotImplementedException
      */
-    public function replaceFile($fileIdentifier, $localFilePath)
+    public function replaceFile(string $fileIdentifier, string $localFilePath): bool
     {
         $contents = file_get_contents($localFilePath);
         $written = $this->setFileContents($fileIdentifier, $contents);
@@ -516,7 +520,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $fileIdentifier
      * @return bool TRUE if deleting the file succeeded
      */
-    public function deleteFile($fileIdentifier)
+    public function deleteFile(string $fileIdentifier): bool
     {
         return $this->deleteObject($fileIdentifier);
     }
@@ -528,7 +532,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param bool $deleteRecursively
      * @return bool
      */
-    public function deleteFolder($folderIdentifier, $deleteRecursively = false)
+    public function deleteFolder(string $folderIdentifier, bool $deleteRecursively = false): bool
     {
         if ($deleteRecursively) {
             $items = $this->getListObjects($folderIdentifier);
@@ -564,7 +568,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @throws \RuntimeException
      * @todo take care of replacing the file on change
      */
-    public function getFileForLocalProcessing($fileIdentifier, $writable = true)
+    public function getFileForLocalProcessing(string $fileIdentifier, bool $writable = true): string
     {
         $temporaryPath = $this->getTemporaryPathForFile($fileIdentifier);
         $this->s3Client->getObject([
@@ -593,7 +597,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $parentFolderIdentifier
      * @return string
      */
-    public function createFile($fileName, $parentFolderIdentifier)
+    public function createFile(string $fileName, string $parentFolderIdentifier): string
     {
         $parentFolderIdentifier = $this->canonicalizeAndCheckFolderIdentifier($parentFolderIdentifier);
         $identifier = $this->canonicalizeAndCheckFileIdentifier(
@@ -612,7 +616,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param bool $recursive
      * @return string the Identifier of the new folder
      */
-    public function createFolder($newFolderName, $parentFolderIdentifier = '', $recursive = false)
+    public function createFolder(string $newFolderName, string $parentFolderIdentifier = '', bool $recursive = false): string
     {
         $parentFolderIdentifier = $this->canonicalizeAndCheckFolderIdentifier($parentFolderIdentifier);
         $newFolderName = trim($newFolderName, '/');
@@ -640,7 +644,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $fileIdentifier
      * @return string The file contents
      */
-    public function getFileContents($fileIdentifier)
+    public function getFileContents(string $fileIdentifier): string
     {
         $result = $this->s3Client->getObject([
             'Bucket' => $this->configuration['bucket'],
@@ -656,9 +660,9 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $contents
      * @return int The number of bytes written to the file
      */
-    public function setFileContents($fileIdentifier, $contents)
+    public function setFileContents(string $fileIdentifier, string $contents): int
     {
-        return file_put_contents($this->getStreamWrapperPath($fileIdentifier), $contents);
+        return (int)file_put_contents($this->getStreamWrapperPath($fileIdentifier), $contents);
     }
 
     /**
@@ -668,7 +672,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $newName The target path (including the file name!)
      * @return string The identifier of the file after renaming
      */
-    public function renameFile($fileIdentifier, $newName)
+    public function renameFile(string $fileIdentifier, string $newName): string
     {
         $newName = $this->sanitizeFileName($newName);
         $newIdentifier = rtrim(PathUtility::dirname($fileIdentifier), '/') . '/' . $newName;
@@ -684,7 +688,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $newName
      * @return array A map of old to new file identifiers of all affected resources
      */
-    public function renameFolder($folderIdentifier, $newName)
+    public function renameFolder(string $folderIdentifier, string $newName): array
     {
         $this->resetIdentifierMap();
         $newName = $this->sanitizeFileName($newName);
@@ -720,7 +724,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @return array All files which are affected, map of old => new file identifiers
      */
-    public function moveFolderWithinStorage($sourceFolderIdentifier, $targetFolderIdentifier, $newFolderName)
+    public function moveFolderWithinStorage(string $sourceFolderIdentifier, string $targetFolderIdentifier, string $newFolderName): array
     {
         $this->resetIdentifierMap();
 
@@ -749,7 +753,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @return bool
      */
-    public function copyFolderWithinStorage($sourceFolderIdentifier, $targetFolderIdentifier, $newFolderName)
+    public function copyFolderWithinStorage(string $sourceFolderIdentifier, string $targetFolderIdentifier, string $newFolderName): bool
     {
         $newIdentifier = $targetFolderIdentifier . $newFolderName . '/';
         $this->copyObject($sourceFolderIdentifier, $newIdentifier);
@@ -774,7 +778,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $folderIdentifier
      * @return bool TRUE if there are no files and folders within $folder
      */
-    public function isFolderEmpty($folderIdentifier)
+    public function isFolderEmpty(string $folderIdentifier): bool
     {
         $result = $this->getListObjects(
             $folderIdentifier,
@@ -811,7 +815,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier identifier to be checked against $folderIdentifier
      * @return bool TRUE if $content is within or matches $folderIdentifier
      */
-    public function isWithin($folderIdentifier, $identifier)
+    public function isWithin(string $folderIdentifier, string $identifier): bool
     {
         $folderIdentifier = $this->canonicalizeAndCheckFileIdentifier($folderIdentifier);
         $entryIdentifier = $this->canonicalizeAndCheckFileIdentifier($identifier);
@@ -832,16 +836,16 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      *
      * @param string $folderIdentifier
      */
-    public function getFolderInfoByIdentifier($folderIdentifier): array
+    public function getFolderInfoByIdentifier(string $folderIdentifier): array
     {
         $this->normalizeIdentifier($folderIdentifier);
 
         return [
             'identifier' => rtrim($folderIdentifier, '/') . '/',
             'name' => basename(rtrim($folderIdentifier, '/')),
-            'storage' => $this->storageUid,
-            'ctime' => null,
-            'mtime' => null,
+            'storage' => (int)$this->storageUid,
+            'ctime' => 0,
+            'mtime' => 0,
         ];
     }
 
@@ -852,7 +856,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $folderIdentifier
      * @return string File Identifier
      */
-    public function getFileInFolder($fileName, $folderIdentifier)
+    public function getFileInFolder(string $fileName, string $folderIdentifier): string
     {
         $folderIdentifier = $folderIdentifier . '/' . $fileName;
         $this->normalizeIdentifier($folderIdentifier);
@@ -877,7 +881,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return array of FileIdentifiers
      * @toDo: Implement $start, $numberOfItems, $sort and $sortRev
      */
-    public function getFilesInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = false, array $filenameFilterCallbacks = [], $sort = '', $sortRev = false)
+    public function getFilesInFolder(string $folderIdentifier, int $start = 0, int $numberOfItems = 0, bool $recursive = false, array $filenameFilterCallbacks = [], string $sort = '', bool $sortRev = false): array
     {
         $this->normalizeFolderIdentifier($folderIdentifier);
         $files = [];
@@ -933,7 +937,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param array $filenameFilterCallbacks callbacks for filtering the items
      * @return int Number of files in folder
      */
-    public function countFilesInFolder($folderIdentifier, $recursive = false, array $filenameFilterCallbacks = [])
+    public function countFilesInFolder(string $folderIdentifier, bool $recursive = false, array $filenameFilterCallbacks = []): int
     {
         return count($this->getFilesInFolder($folderIdentifier, 0, 0, $recursive, $filenameFilterCallbacks));
     }
@@ -955,7 +959,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return array of Folder Identifier
      * @toDo: Implement params $start, $numberOfItems, $sort, $sortRev
      */
-    public function getFoldersInFolder($folderIdentifier, $start = 0, $numberOfItems = 0, $recursive = false, array $folderNameFilterCallbacks = [], $sort = '', $sortRev = false)
+    public function getFoldersInFolder(string $folderIdentifier, int $start = 0, int $numberOfItems = 0, bool $recursive = false, array $folderNameFilterCallbacks = [], string $sort = '', bool $sortRev = false): array
     {
         $this->normalizeIdentifier($folderIdentifier);
         $folders = [];
@@ -1012,7 +1016,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param array $folderNameFilterCallbacks callbacks for filtering the items
      * @return int Number of folders in folder
      */
-    public function countFoldersInFolder($folderIdentifier, $recursive = false, array $folderNameFilterCallbacks = [])
+    public function countFoldersInFolder(string $folderIdentifier, bool $recursive = false, array $folderNameFilterCallbacks = []): int
     {
         return count($this->getFoldersInFolder($folderIdentifier, 0, 0, $recursive, $folderNameFilterCallbacks));
     }
@@ -1025,7 +1029,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier
      * @return void
      */
-    public function dumpFileContents($identifier)
+    public function dumpFileContents(string $identifier): void
     {
         $fileContents = $this->getFileContents($identifier);
         echo $fileContents;
@@ -1039,7 +1043,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @param string $identifier
      * @return array
      */
-    public function getPermissions($identifier)
+    public function getPermissions(string $identifier): array
     {
         return $this->getObjectPermissions($identifier);
     }
@@ -1049,13 +1053,13 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * configuration into the actual capabilities of the driver
      * and returns the result.
      *
-     * @param int $capabilities
+     * @param Capabilities $capabilities
      *
-     * @return int
+     * @return Capabilities
      */
-    public function mergeConfigurationCapabilities($capabilities)
+    public function mergeConfigurationCapabilities(Capabilities $capabilities): Capabilities
     {
-        $this->capabilities &= $capabilities;
+        $this->capabilities->and($capabilities);
         return $this->capabilities;
     }
 
@@ -1112,7 +1116,8 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     {
         $protocol = $this->configuration['protocol'] ?? '';
         if ($protocol == 'auto') {
-            $protocol = GeneralUtility::getIndpEnv('TYPO3_SSL') ? 'https://' : 'http://';
+            $normalizedParams = ($GLOBALS['TYPO3_REQUEST'] ?? null)?->getAttribute('normalizedParams');
+            $protocol = $normalizedParams instanceof NormalizedParams && $normalizedParams->isHttps() ? 'https://' : 'http://';
         }
         $baseUrl = $protocol;
 
@@ -1192,7 +1197,8 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         $this->initializeBaseFolder();
 
         if ($this->compatibilityService->isFrontend() && (!isset(self::$settings['dnsPrefetch']) || self::$settings['dnsPrefetch'])) {
-            $GLOBALS['TSFE']->additionalHeaderData['ausDriverAmazonS3_dnsPrefetch'] = '<link rel="dns-prefetch" href="' . $this->baseUrl . '">';
+            GeneralUtility::makeInstance(PageRenderer::class)
+                ->addHeaderData('<link rel="dns-prefetch" href="' . $this->baseUrl . '">');
         }
         return $this;
     }
@@ -1267,7 +1273,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
                 FlashMessage::class,
                 LocalizationUtility::translate($localizationPrefix . 'connectionTestSuccessful.message', static::EXTENSION_NAME),
                 LocalizationUtility::translate($localizationPrefix . 'connectionTestSuccessful.title', static::EXTENSION_NAME),
-                FlashMessage::OK
+                ContextualFeedbackSeverity::OK
             );
             $messageQueue->addMessage($message);
         } catch (\Exception $exception) {
@@ -1276,7 +1282,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
                 FlashMessage::class,
                 $exception->getMessage(),
                 LocalizationUtility::translate($localizationPrefix . 'connectionTestFailed.title', static::EXTENSION_NAME),
-                FlashMessage::WARNING
+                ContextualFeedbackSeverity::WARNING
             );
             $messageQueue->addMessage($message);
         }
@@ -1474,7 +1480,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
                             FlashMessage::class,
                             $exception->getMessage(),
                             '',
-                            FlashMessage::WARNING
+                            ContextualFeedbackSeverity::WARNING
                         );
                         $messageQueue->addMessage($message);
                     }
@@ -1556,7 +1562,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      * @return string Output string with any characters not matching [.a-zA-Z0-9_-] is substituted by '_' and trailing dots removed
      * @throws Exception\InvalidFileNameException
      */
-    public function sanitizeFileName($fileName, $charset = '')
+    public function sanitizeFileName(string $fileName, string $charset = ''): string
     {
         return GeneralUtility::makeInstance(FileNameService::class)
             ->sanitizeFileName((string)$fileName, (string)$charset);
