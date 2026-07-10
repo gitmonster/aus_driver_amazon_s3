@@ -20,6 +20,7 @@ use PHPUnit\Framework\TestCase;
 use Prophecy\PhpUnit\ProphecyTrait;
 use Prophecy\Prophecy\ObjectProphecy;
 use TYPO3\CMS\Core\Resource\File;
+use TYPO3\CMS\Core\Resource\FileType;
 use TYPO3\CMS\Core\Resource\ResourceStorage;
 
 /**
@@ -43,7 +44,7 @@ class MetaDataUpdateServiceTest extends TestCase
         $mock->expects($this->exactly(0))->method('getStorage')->willReturn($this->getStorageProphecy($file)->reveal());
         $mock->expects($this->exactly(0))->method('getExtractor')->willReturn($this->getExtractorProphecy($file)->reveal());
         $mock->updateMetadata([
-            'type' => File::FILETYPE_UNKNOWN,
+            'type' => FileType::UNKNOWN->value,
             'storage' => 42,
             'identifier' => 'foo/bar.file',
         ]);
@@ -60,7 +61,7 @@ class MetaDataUpdateServiceTest extends TestCase
         $mock->expects($this->exactly(0))->method('getStorage')->willReturn($this->getStorageProphecy($file)->reveal());
         $mock->expects($this->exactly(0))->method('getExtractor')->willReturn($this->getExtractorProphecy($file)->reveal());
         $mock->updateMetadata([
-            'type' => File::FILETYPE_APPLICATION,
+            'type' => FileType::APPLICATION->value,
             'storage' => 42,
             'identifier' => 'foo/bar.file',
         ]);

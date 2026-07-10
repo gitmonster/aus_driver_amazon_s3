@@ -61,7 +61,7 @@ class MetaInfoDownloadAdapterTest extends TestCase
     /**
      * @test
      */
-    public function getMetaInfoFromResponseTest()
+    public function testGetMetaInfoFromResponse()
     {
         // prepare test data
         $identifier = 'foo/bar/test.png';
@@ -101,7 +101,7 @@ class MetaInfoDownloadAdapterTest extends TestCase
     /**
      * @test
      */
-    public function getMetaInfoFromResponseWithPseudoMimeTypeTest()
+    public function testGetMetaInfoFromResponseWithPseudoMimeType()
     {
         // prepare test data
         $identifier = 'foo/bar/test.youtube';
