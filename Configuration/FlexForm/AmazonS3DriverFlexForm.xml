@@ -265,6 +265,88 @@
                     </items>
                 </config>
             </fileContentHash>
+            <cacheBackend>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.cacheBackend</label>
+                <description>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.cacheBackend-description</description>
+                <config>
+                    <type>select</type>
+                    <renderType>selectSingle</renderType>
+                    <size>1</size>
+                    <minitems>1</minitems>
+                    <maxitems>1</maxitems>
+                    <default>transient</default>
+                    <items type="array">
+                        <numIndex index="0" type="array">
+                            <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.cacheBackend.transient</label>
+                            <value>transient</value>
+                        </numIndex>
+                        <numIndex index="1" type="array">
+                            <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.cacheBackend.redis</label>
+                            <value>redis</value>
+                        </numIndex>
+                    </items>
+                </config>
+            </cacheBackend>
+            <redisHost>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.redisHost</label>
+                <config>
+                    <type>input</type>
+                    <size>30</size>
+                </config>
+            </redisHost>
+            <redisPort>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.redisPort</label>
+                <config>
+                    <type>number</type>
+                    <size>5</size>
+                    <range>
+                        <lower>0</lower>
+                        <upper>65535</upper>
+                    </range>
+                </config>
+            </redisPort>
+            <redisPassword>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.redisPassword</label>
+                <config>
+                    <type>password</type>
+                    <hashed>0</hashed>
+                    <size>30</size>
+                </config>
+            </redisPassword>
+            <metaInfoCacheDatabase>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.metaInfoCacheDatabase</label>
+                <config>
+                    <type>input</type>
+                    <size>5</size>
+                </config>
+            </metaInfoCacheDatabase>
+            <requestCacheDatabase>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.requestCacheDatabase</label>
+                <config>
+                    <type>input</type>
+                    <size>5</size>
+                </config>
+            </requestCacheDatabase>
+            <metaInfoCacheLifetime>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.metaInfoCacheLifetime</label>
+                <config>
+                    <type>number</type>
+                    <size>8</size>
+                    <range>
+                        <lower>0</lower>
+                    </range>
+                </config>
+            </metaInfoCacheLifetime>
+            <requestCacheLifetime>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.requestCacheLifetime</label>
+                <config>
+                    <type>number</type>
+                    <size>8</size>
+                    <range>
+                        <lower>0</lower>
+                    </range>
+                </config>
+            </requestCacheLifetime>
         </el>
     </ROOT>
 </T3DataStructure>

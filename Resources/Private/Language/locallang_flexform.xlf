@@ -86,6 +86,45 @@
       <trans-unit id="driverConfiguration.fileContentHash.force">
         <source>Receive frolm AWS with a fallback to download and calculate (slowest, might download large files)</source>
       </trans-unit>
+      <trans-unit id="driverConfiguration.cacheBackend">
+        <source>Cache backend for metadata and S3 request caches</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.cacheBackend-description">
+        <source>"Redis" persists cache entries across requests and drastically reduces S3 API calls (recommended for production). "Transient" caches within a single request only (backward compatible). Redis connection and database indices are configured below.</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.cacheBackend.transient">
+        <source>Transient (per request, backward compatible)</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.cacheBackend.redis">
+        <source>Redis (persistent, recommended)</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.redisHost">
+        <source>Redis host</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.redisPort">
+        <source>Redis port</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.redisPassword">
+        <source>Redis password (optional)</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.metaInfoCacheDatabase">
+        <source>Redis DB index for the metadata cache</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.requestCacheDatabase">
+        <source>Redis DB index for the request cache</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.metaInfoCacheDatabase-description">
+        <source>Required when cache backend is "redis"; leave empty to keep the per-request cache for metadata.</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.requestCacheDatabase-description">
+        <source>Required when cache backend is "redis"; leave empty to keep the per-request cache for requests.</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.metaInfoCacheLifetime">
+        <source>Metadata cache lifetime (seconds, 0 = until flushed)</source>
+      </trans-unit>
+      <trans-unit id="driverConfiguration.requestCacheLifetime">
+        <source>Request cache lifetime (seconds, 0 = until flushed)</source>
+      </trans-unit>
 		</body>
 	</file>
 </xliff>
