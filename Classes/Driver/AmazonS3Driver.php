@@ -113,20 +113,19 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     protected $identifierMap = [];
 
     /**
-     * Object meta data is cached here. Instantiated in initialize() so the
-     * backend can be chosen from the merged storage configuration.
+     * Object meta data is cached here
      *
-     * @var FrontendInterface|null
+     * @var FrontendInterface
      */
-    protected ?FrontendInterface $metaInfoCache = null;
+    protected FrontendInterface $metaInfoCache;
 
     /**
-     * Generic request -> response cache. Instantiated in initialize().
-     * Used for 'listObjectsV2' until now.
+     * Generic request -> response cache
+     * Used for 'listObjectsV2' until now
      *
-     * @var FrontendInterface|null
+     * @var FrontendInterface
      */
-    protected ?FrontendInterface $requestCache = null;
+    protected FrontendInterface $requestCache;
 
     /**
      * To differentiate between multiple drivers
@@ -202,6 +201,8 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         );
         $this->streamWrapperProtocol = 's3-' . substr(md5(uniqid()), 0, 7);
         $this->s3Client = $s3Client;
+        $this->metaInfoCache = GeneralUtility::makeInstance(CacheManager::class)->getCache('ausdriveramazons3_metainfocache');
+        $this->requestCache = GeneralUtility::makeInstance(CacheManager::class)->getCache('ausdriveramazons3_requestcache');
     }
 
     /**
@@ -231,7 +232,6 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     {
         $this->initializeSettings()
             ->initializeClient();
-        $this->initializeCaches();
         // Test connection if we are in the edit view of this storage
         if (
             $this->compatibilityService->isBackend()
@@ -239,27 +239,6 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         ) {
             $this->testConnection();
         }
-    }
-
-    /**
-     * Configures and instantiates the internal caches from the merged storage
-     * configuration (FlexForm values overridden by AdditionalConfiguration storage
-     * settings), so the cache backend (transient or Redis) is fully configurable
-     * per storage from the backend. Must run after initializeSettings() merged
-     * the overrides, therefore it cannot live in the constructor.
-     *
-     * @return void
-     */
-    protected function initializeCaches(): void
-    {
-        $cacheConfigurator = new \AUS\AusDriverAmazonS3\Cache\CacheConfigurator();
-        $GLOBALS['TYPO3_CONF_VARS']['SYS']['caching']['cacheConfigurations']['ausdriveramazons3_metainfocache']
-            = $cacheConfigurator->buildForMetaInfoCache($this->configuration);
-        $GLOBALS['TYPO3_CONF_VARS']['SYS']['caching']['cacheConfigurations']['ausdriveramazons3_requestcache']
-            = $cacheConfigurator->buildForRequestCache($this->configuration);
-        $cacheManager = GeneralUtility::makeInstance(CacheManager::class);
-        $this->metaInfoCache = $cacheManager->getCache('ausdriveramazons3_metainfocache');
-        $this->requestCache = $cacheManager->getCache('ausdriveramazons3_requestcache');
     }
 
     /**

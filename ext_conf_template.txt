@@ -3,3 +3,27 @@ dnsPrefetch = 1
 
 # cat=basic//; type=boolean; label=LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:ausDriverAmazonS3.settings.enablePermissionsCheck
 enablePermissionsCheck = 0
+
+# cat=cache//; type=options[transient,redis]; label=Cache backend for the driver's metadata and S3 request caches. "redis" persists entries across requests and drastically reduces S3 API calls (recommended for production). "transient" caches within a single request only (backward compatible).
+cacheBackend = transient
+
+# cat=cache//; type=string; label=Redis host (leave empty for default 127.0.0.1)
+redisHost =
+
+# cat=cache//; type=int; label=Redis port (default 6379)
+redisPort = 6379
+
+# cat=cache//; type=string; label=Redis password (optional)
+redisPassword =
+
+# cat=cache//; type=string; label=Redis DB index for the metadata cache. Required when cacheBackend is "redis"; leave empty to keep the per-request cache for metadata.
+metaInfoCacheDatabase =
+
+# cat=cache//; type=string; label=Redis DB index for the request cache. Required when cacheBackend is "redis"; leave empty to keep the per-request cache for requests.
+requestCacheDatabase =
+
+# cat=cache//; type=int; label=Metadata cache lifetime in seconds (0 = no expiry; entries are flushed automatically on file changes)
+metaInfoCacheLifetime = 0
+
+# cat=cache//; type=int; label=Request cache lifetime in seconds (0 = no expiry; flushed automatically on file changes)
+requestCacheLifetime = 0
