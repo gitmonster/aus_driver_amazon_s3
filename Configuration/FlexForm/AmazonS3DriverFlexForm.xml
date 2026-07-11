@@ -160,6 +160,7 @@
                 <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.secretKey</label>
                 <config>
                     <type>password</type>
+                    <hashed>false</hashed>
                     <size>30</size>
                 </config>
             </secretKey>
