@@ -571,9 +571,16 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     public function getFileForLocalProcessing(string $fileIdentifier, bool $writable = true): string
     {
         $temporaryPath = $this->getTemporaryPathForFile($fileIdentifier);
+        // Normalize the S3 key consistently with createObject()/getMetaInfo():
+        // the raw FAL identifier has a leading '/', producing a key like
+        // '/_processed_/...' that does not match the object stored under
+        // '_processed_/...' (NoSuchKey). Separate variable so the original
+        // $fileIdentifier stays intact for the temp path and the event.
+        $key = $fileIdentifier;
+        $this->normalizeIdentifier($key);
         $this->s3Client->getObject([
             'Bucket' => $this->configuration['bucket'],
-            'Key' => $this->addBaseFolder($fileIdentifier),
+            'Key' => $this->addBaseFolder($key),
             'SaveAs' => $temporaryPath,
         ]);
         if (!is_file($temporaryPath)) {
@@ -646,6 +653,9 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      */
     public function getFileContents(string $fileIdentifier): string
     {
+        // Normalize the key (strip leading '/') so it matches the object
+        // location used by createObject()/setFileContents()/getMetaInfo().
+        $this->normalizeIdentifier($fileIdentifier);
         $result = $this->s3Client->getObject([
             'Bucket' => $this->configuration['bucket'],
             'Key' => $this->addBaseFolder($fileIdentifier)
