@@ -600,11 +600,23 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         // $fileIdentifier stays intact for the temp path and the event.
         $key = $fileIdentifier;
         $this->normalizeIdentifier($key);
-        $this->s3Client->getObject([
-            'Bucket' => $this->configuration['bucket'],
-            'Key' => $this->addBaseFolder($key),
-            'SaveAs' => $temporaryPath,
-        ]);
+        try {
+            $this->s3Client->getObject([
+                'Bucket' => $this->configuration['bucket'],
+                'Key' => $this->addBaseFolder($key),
+                'SaveAs' => $temporaryPath,
+            ]);
+        } catch (\Aws\S3\Exception\S3Exception $exception) {
+            // Only swallow "not found" (HTTP 404): the object does not exist, so
+            // no temp file is written and the is_file() check below raises the
+            // expected TYPO3 RuntimeException (1320577649) instead of leaking the
+            // raw AWS exception. Any other error (network, 5xx, permissions) must
+            // propagate so it is actually noticed.
+            $previous = $exception->getPrevious();
+            if (!$previous || $previous->getCode() !== 404) {
+                throw $exception;
+            }
+        }
         if (!is_file($temporaryPath)) {
             throw new \RuntimeException('Copying file ' . $fileIdentifier . ' to temporary path failed.', 1320577649);
         }
