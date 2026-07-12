@@ -265,6 +265,62 @@
                     </items>
                 </config>
             </fileContentHash>
+            <localProcessingSkipDownloadPaths>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingSkipDownloadPaths</label>
+                <description>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingSkipDownloadPaths-description</description>
+                <config>
+                    <type>input</type>
+                    <size>50</size>
+                    <default>_processed_/</default>
+                </config>
+            </localProcessingSkipDownloadPaths>
+            <localProcessingCacheRevalidation>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheRevalidation</label>
+                <description>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheRevalidation-description</description>
+                <config>
+                    <type>select</type>
+                    <renderType>selectSingle</renderType>
+                    <default>strict</default>
+                    <size>1</size>
+                    <minitems>1</minitems>
+                    <maxitems>1</maxitems>
+                    <items type="array">
+                        <numIndex index="0" type="array">
+                            <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheRevalidation.strict</label>
+                            <value>strict</value>
+                        </numIndex>
+                        <numIndex index="1" type="array">
+                            <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheRevalidation.bounded</label>
+                            <value>bounded</value>
+                        </numIndex>
+                        <numIndex index="2" type="array">
+                            <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheRevalidation.eventual</label>
+                            <value>eventual</value>
+                        </numIndex>
+                    </items>
+                </config>
+            </localProcessingCacheRevalidation>
+            <localProcessingCacheTtl>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheTtl</label>
+                <description>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheTtl-description</description>
+                <displayConditions>FIELD:localProcessingCacheRevalidation:=:bounded</displayConditions>
+                <config>
+                    <type>number</type>
+                    <size>10</size>
+                    <default>300</default>
+                    <range>
+                        <lower>0</lower>
+                    </range>
+                </config>
+            </localProcessingCacheTtl>
+            <localProcessingCacheDirectory>
+                <label>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheDirectory</label>
+                <description>LLL:EXT:aus_driver_amazon_s3/Resources/Private/Language/locallang_flexform.xlf:driverConfiguration.localProcessingCacheDirectory-description</description>
+                <config>
+                    <type>input</type>
+                    <size>50</size>
+                </config>
+            </localProcessingCacheDirectory>
         </el>
     </ROOT>
 </T3DataStructure>

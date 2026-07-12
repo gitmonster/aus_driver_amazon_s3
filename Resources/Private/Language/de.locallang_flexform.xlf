@@ -52,6 +52,39 @@
 			<trans-unit id="ausDriverAmazonS3.settings.enablePermissionsCheck">
 				<target>Prüfe Dateiberechtigungen (sehr langsam)</target>
 			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths">
+				<target>Read-Only-Local-Processing: Download überspringen (Pfad-Präfixe)</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths-description">
+				<target>Read-Only-Zugriffe auf Dateien unter diesen Pfad-Präfixen liefern die Public URL ohne S3-Download. Vorgesehen für Pfade, deren lokale Kopie nie byte-gelesen wird — standardmäßig '_processed_/': TYPO3 füllt dort nur Legacy-Bildmetadaten. Mehrere Präfixe mit Komma oder Leerzeichen trennen. Leer oder 'none' deaktiviert die Skip-Schicht.</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation">
+				<target>Read-Only-Local-Processing: Cache-Revalidierung</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation-description">
+				<target>Wie gecachte Read-Only-Downloads mit S3 konsistent gehalten werden. 'Strict' (Standard) bestätigt jeden Cache-Treffer per Conditional Request gegenüber S3 (kein Transfer bei unveränderter Datei) — S3 bleibt die einzige Wahrheitsquelle. 'Bounded' vertraut einem Eintrag für die TTL unten und revalidiert dann. 'Eventual' vertraut dem Cache bis zum manuellen Flush.</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation.strict">
+				<target>Strict — immer gegen S3 bestätigen (empfohlen)</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation.bounded">
+				<target>Bounded — für TTL vertrauen, dann revalidieren</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation.eventual">
+				<target>Eventual — vertrauen bis zum manuellen Flush</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheTtl">
+				<target>Read-Only-Local-Processing: Cache-TTL (Sekunden)</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheTtl-description">
+				<target>Nur im Modus 'Bounded' verwendet. Wie lange ein Cache-Eintrag vertraut wird, bevor er gegen S3 revalidiert wird.</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheDirectory">
+				<target>Read-Only-Local-Processing: Cache-Verzeichnis</target>
+			</trans-unit>
+			<trans-unit id="driverConfiguration.localProcessingCacheDirectory-description">
+				<target>Verzeichnis für gecachte Read-Only-Downloads. Standard ist der TYPO3-var-Pfad unter 'aus_s3_local/'. Für Persistenz über Container-Restarts hier ein Volume mounten (z. B. ein Kubernetes-PVC).</target>
+			</trans-unit>
 		</body>
 	</file>
 </xliff>

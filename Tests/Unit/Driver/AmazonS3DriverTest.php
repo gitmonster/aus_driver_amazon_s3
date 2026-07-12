@@ -18,6 +18,7 @@ use Aws\Api\DateTimeResult;
 use Aws\Result;
 use Aws\S3\S3Client;
 use PHPUnit\Framework\TestCase;
+use Prophecy\Argument;
 use Prophecy\PhpUnit\ProphecyTrait;
 use Prophecy\Prophecy\ObjectProphecy;
 use Psr\Http\Message\ServerRequestInterface;
@@ -50,6 +51,16 @@ class AmazonS3DriverTest extends TestCase
     protected $s3Client = null;
 
     /**
+     * @var ObjectProphecy
+     */
+    protected $eventDispatcher = null;
+
+    /**
+     * @var string[]
+     */
+    protected array $tempCacheDirs = [];
+
+    /**
      * @var string[]
      */
     protected $testConfiguration = [
@@ -77,7 +88,7 @@ class AmazonS3DriverTest extends TestCase
             true,
             '',
             '',
-            '',
+            rtrim(sys_get_temp_dir(), '/') . '/aus-driver-var',
             '',
             '',
             ''
@@ -98,6 +109,7 @@ class AmazonS3DriverTest extends TestCase
         ]);
         $this->s3Client = $this->prophesize(S3Client::class);
         $eventDispatcher = $this->prophesize(EventDispatcher::class);
+        $this->eventDispatcher = $eventDispatcher;
         $pageRenderer = $this->prophesize(PageRenderer::class);
         GeneralUtility::setSingletonInstance(PageRenderer::class, $pageRenderer->reveal());
         $this->driver = new AmazonS3Driver($this->testConfiguration, $this->s3Client->reveal(), $eventDispatcher->reveal());
@@ -107,6 +119,12 @@ class AmazonS3DriverTest extends TestCase
 
     public function tearDown(): void
     {
+        foreach ($this->tempCacheDirs as $dir) {
+            if (is_dir($dir)) {
+                GeneralUtility::rmdir($dir, true);
+            }
+        }
+        $this->tempCacheDirs = [];
         unset($GLOBALS['TYPO3_REQUEST']);
         GeneralUtility::purgeInstances();
         parent::tearDown();
@@ -237,5 +255,165 @@ class AmazonS3DriverTest extends TestCase
         $this->assertEquals('video/youtube', $info['mimetype']);
         $this->assertEquals(12345, $info['size']);
         $this->assertEquals($this->driver->getStorageUid(), $info['storage']);
+    }
+
+    /**
+     * Read-only local processing: helpers for the two-layer strategy tests below.
+     */
+    protected function setDriverConfiguration(string $key, mixed $value): void
+    {
+        $reflection = new \ReflectionProperty(AmazonS3Driver::class, 'configuration');
+        $reflection->setAccessible(true);
+        $configuration = $reflection->getValue($this->driver);
+        $configuration[$key] = $value;
+        $reflection->setValue($this->driver, $configuration);
+    }
+
+    protected function useLocalProcessingCacheDirectory(): string
+    {
+        $directory = rtrim(sys_get_temp_dir(), '/') . '/aus_driver_test_' . bin2hex(random_bytes(4));
+        $this->tempCacheDirs[] = $directory;
+        $this->setDriverConfiguration('localProcessingCacheDirectory', $directory);
+        return $directory . '/';
+    }
+
+    /**
+     * @test
+     */
+    public function readOnlyProcessedFileIsSkippedAndServedFromPublicUrl(): void
+    {
+        $calls = 0;
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args) use (&$calls): Result {
+            $calls++;
+            return new Result([]);
+        });
+
+        // The skip prefix defaults to "_processed_/" when the setting is absent.
+        $result = $this->driver->getFileForLocalProcessing('/_processed_/csm_image_abc.jpg', false);
+
+        $this->assertSame('https://www.example.com/_processed_/csm_image_abc.jpg', $result);
+        $this->assertSame(0, $calls, 'Skip layer must not trigger an S3 download');
+    }
+
+    /**
+     * @test
+     */
+    public function readOnlyOriginalFileIsCachedOnColdMiss(): void
+    {
+        $cacheDirectory = $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'original-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $result = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($expectedPath, $result);
+        $this->assertFileExists($expectedPath);
+        $this->assertSame('original-bytes', file_get_contents($expectedPath));
+    }
+
+    /**
+     * @test
+     */
+    public function strictRevalidationServesCacheOnNotModified(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            if (isset($params['IfNoneMatch'])) {
+                // S3 returns 304 when the object is unchanged; the AWS SDK raises it as an exception.
+                throw new \Exception('Not Modified', 304);
+            }
+            file_put_contents($params['SaveAs'], 'original-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $first = $this->driver->getFileForLocalProcessing($identifier, false);
+        $second = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($first, $second);
+        $this->assertFileExists($second);
+        $this->assertSame('original-bytes', file_get_contents($second), 'Cached file must not be overwritten on a 304 response');
+    }
+
+    /**
+     * @test
+     */
+    public function strictRevalidationOverwritesOnModified(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            if (isset($params['IfNoneMatch'])) {
+                file_put_contents($params['SaveAs'], 'updated-bytes');
+                return new Result(['ETag' => '"etag-2"', 'LastModified' => new DateTimeResult('2024-02-01T00:00:00Z')]);
+            }
+            file_put_contents($params['SaveAs'], 'original-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $first = $this->driver->getFileForLocalProcessing($identifier, false);
+        $second = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($first, $second);
+        $this->assertSame('updated-bytes', file_get_contents($second), 'Cached file must be overwritten when S3 reports a change');
+    }
+
+    /**
+     * @test
+     */
+    public function eventualModeServesCacheWithoutRevalidation(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $this->setDriverConfiguration('localProcessingCacheRevalidation', 'eventual');
+        $identifier = '/originals/photo.jpg';
+
+        $calls = 0;
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args) use (&$calls): Result {
+            $calls++;
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'original-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $first = $this->driver->getFileForLocalProcessing($identifier, false);
+        $second = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, $calls, 'Eventual mode must not revalidate an existing cache entry');
+    }
+
+    /**
+     * @test
+     */
+    public function writableAccessAlwaysDownloadsFreshTempFile(): void
+    {
+        $cacheDirectory = $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+        $cachePath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+
+        $this->eventDispatcher->dispatch(Argument::cetera())->will(function ($args) {
+            return $args[0];
+        });
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'writable-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $result = $this->driver->getFileForLocalProcessing($identifier, true);
+
+        $this->assertNotSame($cachePath, $result, 'Writable access must not return the persistent cache path');
+        $this->assertFileExists($result);
+        $this->assertSame('writable-bytes', file_get_contents($result));
     }
 }

@@ -570,6 +570,28 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      */
     public function getFileForLocalProcessing(string $fileIdentifier, bool $writable = true): string
     {
+        // Read-only access can be satisfied without a fresh download:
+        //  - Layer A (skip-download): identifiers under a configured prefix (default "_processed_/")
+        //    return their public URL directly. TYPO3 only uses this value to fill the legacy
+        //    ImageResource "fullPath" metadata (AssetCollector), it is never byte-read on modern
+        //    sites, so downloading is pure waste here.
+        //  - Layer B (persistent cache): all other read-only access is served from a local cache,
+        //    revalidated against S3 according to the configured consistency mode ("strict" default).
+        // Writable access always downloads a fresh, private temp file (original behaviour).
+        if (!$writable) {
+            if ($this->isLocalProcessingSkipDownload($fileIdentifier)) {
+                $publicUrl = $this->getPublicUrl($fileIdentifier);
+                if ($publicUrl !== null && $publicUrl !== '') {
+                    return $publicUrl;
+                }
+            }
+            $cachedPath = $this->getCachedLocalProcessingPath($fileIdentifier);
+            if ($cachedPath !== null) {
+                return $cachedPath;
+            }
+        }
+
+        // Writable access, or read-only fallback when the cache layer could not satisfy the request.
         $temporaryPath = $this->getTemporaryPathForFile($fileIdentifier);
         // Normalize the S3 key consistently with createObject()/getMetaInfo():
         // the raw FAL identifier has a leading '/', producing a key like
@@ -595,6 +617,232 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
             $this->temporaryPaths[$temporaryPath] = $temporaryPath;
         }
         return $temporaryPath;
+    }
+
+    /**
+     * Read-only local processing: resolve the cached path for the identifier, ensuring the file is
+     * present and valid per the configured consistency mode. Returns the cached path, or null when
+     * the cache layer cannot satisfy the request (caller falls back to a fresh download).
+     */
+    protected function getCachedLocalProcessingPath(string $fileIdentifier): ?string
+    {
+        try {
+            $cachedPath = $this->getLocalProcessingCachePath($fileIdentifier);
+            $this->ensureValidLocalProcessingFile($fileIdentifier, $cachedPath);
+            return $cachedPath;
+        } catch (\Throwable $e) {
+            // A cache/PVC hiccup must never break rendering: degrade to a fresh download.
+            GeneralUtility::makeInstance(LogManager::class)
+                ->getLogger(__CLASS__)
+                ->error('Local processing cache failed, falling back to direct download: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Ensures the cached file for $fileIdentifier is present and current. Cold misses download the
+     * object; existing entries are trusted (eventual), trusted within a TTL (bounded), or
+     * revalidated against S3 via a conditional GET (strict / bounded past its window).
+     */
+    protected function ensureValidLocalProcessingFile(string $fileIdentifier, string $cachedPath): void
+    {
+        if (!is_file($cachedPath)) {
+            $this->fetchObjectToCache($fileIdentifier, $cachedPath, null);
+            return;
+        }
+        $mode = $this->getLocalProcessingRevalidationMode();
+        if ($mode === 'eventual') {
+            return;
+        }
+        $meta = $this->readLocalProcessingMeta($cachedPath);
+        if ($mode === 'bounded' && (time() - (int)($meta['validatedAt'] ?? 0)) < $this->getLocalProcessingTtl()) {
+            return;
+        }
+        // strict, or bounded past its trust window: revalidate against S3.
+        $this->fetchObjectToCache($fileIdentifier, $cachedPath, $meta['etag'] ?? null);
+    }
+
+    /**
+     * Downloads (or revalidates) the S3 object into the cache path. When $ifNoneMatch is given, a
+     * conditional GET is performed: a 304 response leaves the cached file untouched (still valid),
+     * a 200 response atomically replaces it. The cache metadata (etag, mtime, validatedAt) is
+     * refreshed on every successful fetch and on every 304. The download targets a temp file in the
+     * same directory as the cached path so the final rename is atomic (and works across mounts).
+     */
+    protected function fetchObjectToCache(string $fileIdentifier, string $cachedPath, ?string $ifNoneMatch): void
+    {
+        $key = $fileIdentifier;
+        $this->normalizeIdentifier($key);
+        $useConditional = $ifNoneMatch !== null && $ifNoneMatch !== '';
+        $tempPath = $cachedPath . '.tmp_' . bin2hex(random_bytes(4));
+        $args = [
+            'Bucket' => $this->configuration['bucket'],
+            'Key' => $this->addBaseFolder($key),
+            'SaveAs' => $tempPath,
+        ];
+        if ($useConditional) {
+            $args['IfNoneMatch'] = $ifNoneMatch;
+        }
+        try {
+            $result = $this->s3Client->getObject($args);
+            // 200: object downloaded to $tempPath. Promote it to the cached path.
+            if (is_file($tempPath)) {
+                rename($tempPath, $cachedPath);
+            }
+            $this->writeLocalProcessingMeta($cachedPath, [
+                'etag' => $this->extractEtag($result),
+                'mtime' => $this->extractMtime($result),
+                'validatedAt' => time(),
+            ]);
+        } catch (\Exception $e) {
+            if (is_file($tempPath)) {
+                @unlink($tempPath);
+            }
+            if ($useConditional && $this->isNotModifiedResponse($e)) {
+                // 304: the cached file is still current; only refresh the validation timestamp.
+                $meta = $this->readLocalProcessingMeta($cachedPath);
+                $meta['validatedAt'] = time();
+                $this->writeLocalProcessingMeta($cachedPath, $meta);
+                return;
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Whether a 304 "Not Modified" response was returned for a conditional GET (the AWS SDK raises
+     * it as an exception rather than returning a result).
+     */
+    protected function isNotModifiedResponse(\Exception $e): bool
+    {
+        if ($e->getCode() === 304) {
+            return true;
+        }
+        if (method_exists($e, 'getResponse')) {
+            $response = $e->getResponse();
+            if (is_object($response) && method_exists($response, 'getStatusCode') && $response->getStatusCode() === 304) {
+                return true;
+            }
+        }
+        return str_contains($e->getMessage(), '304') || stripos($e->getMessage(), 'Not Modified') !== false;
+    }
+
+    /**
+     * Read-only access under one of these (normalised) path prefixes returns the public URL without
+     * an S3 download. Default "_processed_/". Empty or "none" disables the skip layer.
+     *
+     * @return string[]
+     */
+    protected function getLocalProcessingSkipPrefixes(): array
+    {
+        $raw = trim((string)($this->configuration['localProcessingSkipDownloadPaths'] ?? '_processed_/'));
+        if ($raw === '' || strtolower($raw) === 'none') {
+            return [];
+        }
+        $prefixes = preg_split('/[\s,]+/', $raw) ?: [];
+        return array_values(array_filter(array_map('trim', $prefixes), static fn(string $p): bool => $p !== ''));
+    }
+
+    protected function isLocalProcessingSkipDownload(string $fileIdentifier): bool
+    {
+        $prefixes = $this->getLocalProcessingSkipPrefixes();
+        if ($prefixes === []) {
+            return false;
+        }
+        $identifier = $fileIdentifier;
+        $this->normalizeIdentifier($identifier);
+        foreach ($prefixes as $prefix) {
+            $normalizedPrefix = $prefix;
+            $this->normalizeIdentifier($normalizedPrefix);
+            if ($normalizedPrefix !== '' && str_starts_with($identifier, $normalizedPrefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Cache consistency mode for layer B: "strict" (default), "bounded" or "eventual".
+     */
+    protected function getLocalProcessingRevalidationMode(): string
+    {
+        $mode = (string)($this->configuration['localProcessingCacheRevalidation'] ?? 'strict');
+        return in_array($mode, ['strict', 'bounded', 'eventual'], true) ? $mode : 'strict';
+    }
+
+    /**
+     * Trust window in seconds for "bounded" mode (default 300s).
+     */
+    protected function getLocalProcessingTtl(): int
+    {
+        $ttl = (int)($this->configuration['localProcessingCacheTtl'] ?? 300);
+        return $ttl > 0 ? $ttl : 300;
+    }
+
+    /**
+     * Directory holding the cached read-only downloads. Defaults to "<varPath>/aus_s3_local/".
+     * Mount a persistent volume here (k8s: PVC) if the cache should survive container restarts.
+     */
+    protected function getLocalProcessingCacheDirectory(): string
+    {
+        $directory = rtrim((string)($this->configuration['localProcessingCacheDirectory'] ?? ''), '/');
+        if ($directory === '') {
+            $directory = rtrim(\TYPO3\CMS\Core\Core\Environment::getVarPath(), '/') . '/aus_s3_local';
+        }
+        $directory .= '/';
+        if (!is_dir($directory)) {
+            GeneralUtility::mkdir_deep($directory);
+        }
+        return $directory;
+    }
+
+    /**
+     * Stable cache file path for an identifier (sha256 of the normalised identifier). The path does
+     * not encode mtime: a changed object overwrites the same path (no orphans, no cleanup).
+     */
+    protected function getLocalProcessingCachePath(string $fileIdentifier): string
+    {
+        $normalized = $fileIdentifier;
+        $this->normalizeIdentifier($normalized);
+        return $this->getLocalProcessingCacheDirectory() . hash('sha256', $normalized);
+    }
+
+    protected function getLocalProcessingMetaPath(string $cachedPath): string
+    {
+        return $cachedPath . '.meta';
+    }
+
+    /**
+     * @return array{etag?: ?string, mtime?: ?int, validatedAt?: int}
+     */
+    protected function readLocalProcessingMeta(string $cachedPath): array
+    {
+        $metaPath = $this->getLocalProcessingMetaPath($cachedPath);
+        if (!is_file($metaPath)) {
+            return [];
+        }
+        $data = json_decode((string)file_get_contents($metaPath), true);
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * @param array{etag?: ?string, mtime?: ?int, validatedAt?: int} $meta
+     */
+    protected function writeLocalProcessingMeta(string $cachedPath, array $meta): void
+    {
+        file_put_contents($this->getLocalProcessingMetaPath($cachedPath), json_encode($meta));
+    }
+
+    protected function extractEtag($result): ?string
+    {
+        $etag = $result['ETag'] ?? null;
+        return $etag !== null ? (string)$etag : null;
+    }
+
+    protected function extractMtime($result): ?int
+    {
+        $lastModified = $result['LastModified'] ?? null;
+        return $lastModified instanceof \DateTimeInterface ? $lastModified->getTimestamp() : null;
     }
 
     /**
