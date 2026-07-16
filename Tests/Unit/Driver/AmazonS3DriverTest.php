@@ -280,19 +280,26 @@ class AmazonS3DriverTest extends TestCase
     /**
      * @test
      */
-    public function readOnlyProcessedFileIsSkippedAndServedFromPublicUrl(): void
+    public function readOnlyProcessedFileIsDownloadedToLocalPath(): void
     {
-        $calls = 0;
-        $this->s3Client->getObject(Argument::cetera())->will(function ($args) use (&$calls): Result {
-            $calls++;
-            return new Result([]);
+        $cacheDirectory = $this->useLocalProcessingCacheDirectory();
+        $identifier = '/_processed_/csm_image_abc.jpg';
+        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'processed-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
         });
 
-        // The skip prefix defaults to "_processed_/" when the setting is absent.
-        $result = $this->driver->getFileForLocalProcessing('/_processed_/csm_image_abc.jpg', false);
+        // getFileForLocalProcessing() must return a local, byte-readable path — never the public
+        // URL — so callers like ImageInfo::getSize()/ImageMagick can read the bytes. Returning the
+        // public URL made SplFileInfo::getSize() fail with "stat failed for https://...".
+        $result = $this->driver->getFileForLocalProcessing($identifier, false);
 
-        $this->assertSame('https://www.example.com/_processed_/csm_image_abc.jpg', $result);
-        $this->assertSame(0, $calls, 'Skip layer must not trigger an S3 download');
+        $this->assertSame($expectedPath, $result);
+        $this->assertFileExists($expectedPath);
+        $this->assertSame('processed-bytes', file_get_contents($expectedPath));
     }
 
     /**

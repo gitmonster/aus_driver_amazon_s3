@@ -52,12 +52,6 @@
 			<trans-unit id="ausDriverAmazonS3.settings.enablePermissionsCheck">
 				<target>Prüfe Dateiberechtigungen (sehr langsam)</target>
 			</trans-unit>
-			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths">
-				<target>Read-Only-Local-Processing: Download überspringen (Pfad-Präfixe)</target>
-			</trans-unit>
-			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths-description">
-				<target>Read-Only-Zugriffe auf Dateien unter diesen Pfad-Präfixen liefern die Public URL ohne S3-Download. Vorgesehen für Pfade, deren lokale Kopie nie byte-gelesen wird — standardmäßig '_processed_/': TYPO3 füllt dort nur Legacy-Bildmetadaten. Mehrere Präfixe mit Komma oder Leerzeichen trennen. Leer oder 'none' deaktiviert die Skip-Schicht.</target>
-			</trans-unit>
 			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation">
 				<target>Read-Only-Local-Processing: Cache-Revalidierung</target>
 			</trans-unit>

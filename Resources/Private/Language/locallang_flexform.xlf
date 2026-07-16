@@ -86,12 +86,6 @@
       <trans-unit id="driverConfiguration.fileContentHash.force">
         <source>Receive from AWS with a fallback to download and calculate (slowest, might download large files)</source>
       </trans-unit>
-			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths">
-				<source>Read-only local processing: skip download (path prefixes)</source>
-			</trans-unit>
-			<trans-unit id="driverConfiguration.localProcessingSkipDownloadPaths-description">
-				<source>Read-only access to files under these path prefixes returns the public URL without an S3 download. Use this for paths whose local copy is never byte-read by the site — by default '_processed_/': TYPO3 only fills legacy image metadata there. Separate multiple prefixes with commas or whitespace. Empty, or 'none', disables the skip layer.</source>
-			</trans-unit>
 			<trans-unit id="driverConfiguration.localProcessingCacheRevalidation">
 				<source>Read-only local processing: cache revalidation</source>
 			</trans-unit>
