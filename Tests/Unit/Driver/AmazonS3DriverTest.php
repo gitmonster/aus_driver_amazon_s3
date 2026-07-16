@@ -288,11 +288,40 @@ class AmazonS3DriverTest extends TestCase
             return new Result([]);
         });
 
-        // The skip prefix defaults to "_processed_/" when the setting is absent.
+        // Frontend request (see setUp): the skip prefix defaults to "_processed_/", so the driver
+        // returns the public URL without a download — the value is metadata-only in the frontend.
         $result = $this->driver->getFileForLocalProcessing('/_processed_/csm_image_abc.jpg', false);
 
         $this->assertSame('https://www.example.com/_processed_/csm_image_abc.jpg', $result);
         $this->assertSame(0, $calls, 'Skip layer must not trigger an S3 download');
+    }
+
+    /**
+     * @test
+     */
+    public function readOnlyProcessedFileIsServedFromLocalPathInBackend(): void
+    {
+        // Backend byte-reads the result (ImageInfo::getSize in LocalImageProcessor) and must get a
+        // local path — never the public URL — or SplFileInfo::getSize() fails on the URL.
+        $backendRequest = $this->prophesize(ServerRequestInterface::class);
+        $backendRequest->getAttribute('applicationType')->willReturn(SystemEnvironmentBuilder::REQUESTTYPE_BE);
+        $GLOBALS['TYPO3_REQUEST'] = $backendRequest->reveal();
+
+        $cacheDirectory = $this->useLocalProcessingCacheDirectory();
+        $identifier = '/_processed_/csm_image_abc.jpg';
+        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'processed-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $result = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($expectedPath, $result);
+        $this->assertFileExists($expectedPath);
+        $this->assertSame('processed-bytes', file_get_contents($expectedPath));
     }
 
     /**
