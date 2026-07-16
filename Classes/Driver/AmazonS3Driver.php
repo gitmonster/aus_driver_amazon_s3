@@ -570,16 +570,21 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      */
     public function getFileForLocalProcessing(string $fileIdentifier, bool $writable = true): string
     {
-        // Read-only access is served from the persistent local cache (revalidated against S3
-        // according to the configured consistency mode, "strict" by default); writable access
-        // always downloads a fresh, private temp file (original behaviour).
-        //
-        // This method MUST return a local, byte-readable path: callers such as
-        // LocalImageProcessor/ImageInfo or ImageMagick read the bytes (e.g. getSize()/getWidth()).
-        // Returning a public URL here is unsafe — it made SplFileInfo::getSize() throw
-        // "stat failed for https://..." for already-processed files in the backend preview — so the
-        // public URL is never returned (the former "skip-download" layer was removed deliberately).
+        // Read-only access can be satisfied without a fresh download:
+        //  - Layer A (skip-download): identifiers under a configured prefix (default "_processed_/")
+        //    return their public URL directly. TYPO3 only uses this value to fill the legacy
+        //    ImageResource "fullPath" metadata (AssetCollector), it is never byte-read on modern
+        //    sites, so downloading is pure waste here.
+        //  - Layer B (persistent cache): all other read-only access is served from a local cache,
+        //    revalidated against S3 according to the configured consistency mode ("strict" default).
+        // Writable access always downloads a fresh, private temp file (original behaviour).
         if (!$writable) {
+            if ($this->isLocalProcessingSkipDownload($fileIdentifier)) {
+                $publicUrl = $this->getPublicUrl($fileIdentifier);
+                if ($publicUrl !== null && $publicUrl !== '') {
+                    return $publicUrl;
+                }
+            }
             $cachedPath = $this->getCachedLocalProcessingPath($fileIdentifier);
             if ($cachedPath !== null) {
                 return $cachedPath;
@@ -732,6 +737,40 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
             }
         }
         return str_contains($e->getMessage(), '304') || stripos($e->getMessage(), 'Not Modified') !== false;
+    }
+
+    /**
+     * Read-only access under one of these (normalised) path prefixes returns the public URL without
+     * an S3 download. Default "_processed_/". Empty or "none" disables the skip layer.
+     *
+     * @return string[]
+     */
+    protected function getLocalProcessingSkipPrefixes(): array
+    {
+        $raw = trim((string)($this->configuration['localProcessingSkipDownloadPaths'] ?? '_processed_/'));
+        if ($raw === '' || strtolower($raw) === 'none') {
+            return [];
+        }
+        $prefixes = preg_split('/[\s,]+/', $raw) ?: [];
+        return array_values(array_filter(array_map('trim', $prefixes), static fn(string $p): bool => $p !== ''));
+    }
+
+    protected function isLocalProcessingSkipDownload(string $fileIdentifier): bool
+    {
+        $prefixes = $this->getLocalProcessingSkipPrefixes();
+        if ($prefixes === []) {
+            return false;
+        }
+        $identifier = $fileIdentifier;
+        $this->normalizeIdentifier($identifier);
+        foreach ($prefixes as $prefix) {
+            $normalizedPrefix = $prefix;
+            $this->normalizeIdentifier($normalizedPrefix);
+            if ($normalizedPrefix !== '' && str_starts_with($identifier, $normalizedPrefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
