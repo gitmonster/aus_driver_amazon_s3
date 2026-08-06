@@ -2094,7 +2094,8 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      */
     protected function getCacheControl($pathAndFilename)
     {
-        $cacheControl = $this->configuration['cacheHeaderDuration'] ? 'max-age=' . $this->configuration['cacheHeaderDuration'] : '';
+        $cacheHeaderDuration = (int)($this->configuration['cacheHeaderDuration'] ?? 0);
+        $cacheControl = $cacheHeaderDuration > 0 ? 'max-age=' . $cacheHeaderDuration : '';
         $cacheControlHooks = $GLOBALS['TYPO3_CONF_VARS']['EXTCONF'][self::EXTENSION_KEY]['getCacheControl'] ?? null;
         if (is_array($cacheControlHooks)) {
             $fileExtension = pathinfo($pathAndFilename, PATHINFO_EXTENSION);
