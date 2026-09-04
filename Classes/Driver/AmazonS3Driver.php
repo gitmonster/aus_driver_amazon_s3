@@ -627,6 +627,20 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
             if (is_file($temporaryPath)) {
                 @unlink($temporaryPath);
             }
+            // Read-only access to a skip-prefix identifier whose object is confirmed
+            // missing: degrade to the public URL (Layer-A semantics) instead of a hard
+            // RuntimeException. Stale sys_file_processedfile rows (identifier set, object
+            // absent, e.g. after a migration) would otherwise crash whole backend views
+            // (page module previews, crop wizard) on the metadata-only getForLocalProcessing
+            // call in ImageResource::createFromProcessedFile(). TYPO3 self-heals such rows:
+            // ProcessedFile::needsReprocessing() sees !exists() and regenerates the variant
+            // on the next pass, which then uploads a real object again.
+            if (!$writable && $this->isLocalProcessingSkipDownload($fileIdentifier)) {
+                $publicUrl = $this->getPublicUrl($fileIdentifier);
+                if ($publicUrl !== null && $publicUrl !== '') {
+                    return $publicUrl;
+                }
+            }
         }
         if (!is_file($temporaryPath)) {
             throw new \RuntimeException('Copying file ' . $fileIdentifier . ' to temporary path failed.', 1320577649);

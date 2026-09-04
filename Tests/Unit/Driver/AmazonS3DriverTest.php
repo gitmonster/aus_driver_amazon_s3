@@ -449,7 +449,7 @@ class AmazonS3DriverTest extends TestCase
     public function missingObjectDoesNotLeaveUnreadableShellFile(): void
     {
         $this->useLocalProcessingCacheDirectory();
-        $identifier = '/_processed_/csm_missing_variant.jpg';
+        $identifier = '/originals/missing_original.jpg';
 
         $backendRequest = $this->prophesize(ServerRequestInterface::class);
         $backendRequest->getAttribute('applicationType')->willReturn(SystemEnvironmentBuilder::REQUESTTYPE_BE);
@@ -480,6 +480,37 @@ class AmazonS3DriverTest extends TestCase
         $cachePath = $reflection->invoke($this->driver, $identifier);
         $this->assertFileDoesNotExist($cachePath);
         $this->assertFileDoesNotExist($cachePath . '.meta');
+    }
+
+    /**
+     * @test
+     */
+    public function missingProcessedObjectDegradesToPublicUrlInsteadOfCrashing(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $identifier = '/_processed_/csm_stale_variant_without_object.jpg';
+
+        $backendRequest = $this->prophesize(ServerRequestInterface::class);
+        $backendRequest->getAttribute('applicationType')->willReturn(SystemEnvironmentBuilder::REQUESTTYPE_BE);
+        $GLOBALS['TYPO3_REQUEST'] = $backendRequest->reveal();
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args) {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], '<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>');
+            throw new S3Exception(
+                'NoSuchKey',
+                new Command('GetObject'),
+                [],
+                new \Exception('404 Not Found', 404)
+            );
+        });
+
+        // BE metadata consumers (ImageResource::createFromProcessedFile) must not crash
+        // on stale rows pointing at missing objects; the public URL lets TYPO3\'s
+        // self-healing (needsReprocessing) regenerate the variant on the next pass.
+        $result = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame('https://www.example.com/_processed_/csm_stale_variant_without_object.jpg', $result);
     }
 
     /**
