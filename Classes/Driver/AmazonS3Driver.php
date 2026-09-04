@@ -733,6 +733,27 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         }
         try {
             $result = $this->s3Client->getObject($args);
+            // The AWS SDK may surface a 304 Not Modified as a *successful* result
+            // with an empty SaveAs target (depending on SDK version/handler) instead
+            // of raising an exception. Detect that case - no ETag in the result and
+            // an empty temp file after a conditional request - and treat it like the
+            // exception-based 304 below: keep the cached file, refresh validatedAt.
+            // Otherwise the empty shell would overwrite (and thereby destroy) a
+            // perfectly valid cache entry on every strict revalidation.
+            if ($useConditional
+                && $this->extractEtag($result) === null
+                && (!is_file($tempPath) || filesize($tempPath) === 0)
+            ) {
+                if (is_file($tempPath)) {
+                    @unlink($tempPath);
+                }
+                if (is_file($cachedPath)) {
+                    $meta = $this->readLocalProcessingMeta($cachedPath);
+                    $meta['validatedAt'] = time();
+                    $this->writeLocalProcessingMeta($cachedPath, $meta);
+                }
+                return;
+            }
             // 200: object downloaded to $tempPath. Promote it to the cached path.
             if (is_file($tempPath)) {
                 rename($tempPath, $cachedPath);

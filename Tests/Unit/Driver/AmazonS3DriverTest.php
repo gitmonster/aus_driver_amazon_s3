@@ -377,6 +377,38 @@ class AmazonS3DriverTest extends TestCase
     /**
      * @test
      */
+    public function notModifiedAsSuccessfulResultKeepsCacheFileIntact(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+
+        // Cold miss: real download with ETag. Revalidation: the SDK returns a
+        // *successful* result for the conditional request but writes nothing to
+        // SaveAs and carries no ETag (304 surfaced as success, no exception).
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            if (isset($params['IfNoneMatch'])) {
+                return new Result([]);
+            }
+            file_put_contents($params['SaveAs'], 'original-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $first = $this->driver->getFileForLocalProcessing($identifier, false);
+        $second = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($first, $second);
+        $this->assertFileExists($second);
+        // The empty 304 body must NOT have replaced the cached file.
+        $this->assertSame('original-bytes', file_get_contents($second));
+        // The captured ETag must survive so future revalidations stay conditional.
+        $meta = json_decode((string)file_get_contents($second . '.meta'), true);
+        $this->assertSame('"etag-1"', $meta['etag'] ?? null);
+    }
+
+    /**
+     * @test
+     */
     public function strictRevalidationOverwritesOnModified(): void
     {
         $this->useLocalProcessingCacheDirectory();
