@@ -612,13 +612,20 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
             ]);
         } catch (\Aws\S3\Exception\S3Exception $exception) {
             // Only swallow "not found" (HTTP 404): the object does not exist, so
-            // no temp file is written and the is_file() check below raises the
+            // no usable temp file remains and the is_file() check below raises the
             // expected TYPO3 RuntimeException (1320577649) instead of leaking the
             // raw AWS exception. Any other error (network, 5xx, permissions) must
             // propagate so it is actually noticed.
             $previous = $exception->getPrevious();
             if (!$previous || $previous->getCode() !== 404) {
                 throw $exception;
+            }
+            // The SDK may already have written the S3 error body (or an empty shell)
+            // into the SaveAs target before failing. Remove it, or the is_file()
+            // check below would return an unreadable XML/0-byte path to callers —
+            // observed downstream as ImageInfo "Unsupported file" exceptions.
+            if (is_file($temporaryPath)) {
+                @unlink($temporaryPath);
             }
         }
         if (!is_file($temporaryPath)) {
@@ -662,6 +669,17 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
      */
     protected function ensureValidLocalProcessingFile(string $fileIdentifier, string $cachedPath): void
     {
+        if (is_file($cachedPath)) {
+            $meta = $this->readLocalProcessingMeta($cachedPath);
+            if (($meta['etag'] ?? null) === null && ($meta['mtime'] ?? null) === null) {
+                // A cache file whose meta never captured etag/mtime was not written by a
+                // successful download (e.g. a 0-byte shell left behind by a failed one).
+                // Treat it as a miss and re-fetch instead of serving an unreadable file
+                // to ImageInfo/ImageMagick.
+                @unlink($cachedPath);
+                @unlink($this->getLocalProcessingMetaPath($cachedPath));
+            }
+        }
         if (!is_file($cachedPath)) {
             $this->fetchObjectToCache($fileIdentifier, $cachedPath, null);
             return;
@@ -716,9 +734,14 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
             }
             if ($useConditional && $this->isNotModifiedResponse($e)) {
                 // 304: the cached file is still current; only refresh the validation timestamp.
-                $meta = $this->readLocalProcessingMeta($cachedPath);
-                $meta['validatedAt'] = time();
-                $this->writeLocalProcessingMeta($cachedPath, $meta);
+                // Guarded: without a cache file there is nothing to validate — writing a meta
+                // sidecar here would create an etag:null entry that later "heals" nothing but
+                // confuses the consistency logic (observed as poisoned 0-byte cache entries).
+                if (is_file($cachedPath)) {
+                    $meta = $this->readLocalProcessingMeta($cachedPath);
+                    $meta['validatedAt'] = time();
+                    $this->writeLocalProcessingMeta($cachedPath, $meta);
+                }
                 return;
             }
             throw $e;
@@ -839,14 +862,27 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     }
 
     /**
-     * Stable cache file path for an identifier (sha256 of the normalised identifier). The path does
-     * not encode mtime: a changed object overwrites the same path (no orphans, no cleanup).
+     * Stable cache file path for an identifier (sha256 of the normalised identifier,
+     * suffixed with the original extension). The path does not encode mtime: a changed
+     * object overwrites the same path (no orphans, no cleanup).
+     *
+     * The extension is NOT cosmetic: TYPO3's GraphicalFunctions::getImageDimensions()
+     * rejects local paths without a known image extension (it inspects the extension
+     * BEFORE asking the filesystem) and returns NULL — which makes resize() return
+     * NULL and LocalImageProcessor silently degrade every task to "use original file"
+     * without any log entry. An extensionless cache path therefore effectively
+     * disables local image processing for read-only Layer B consumers.
      */
     protected function getLocalProcessingCachePath(string $fileIdentifier): string
     {
         $normalized = $fileIdentifier;
         $this->normalizeIdentifier($normalized);
-        return $this->getLocalProcessingCacheDirectory() . hash('sha256', $normalized);
+        $extension = strtolower((string)pathinfo($normalized, PATHINFO_EXTENSION));
+        if (!preg_match('/^[a-z0-9]{1,10}$/', $extension)) {
+            $extension = '';
+        }
+        $hash = hash('sha256', $normalized);
+        return $this->getLocalProcessingCacheDirectory() . $hash . ($extension !== '' ? '.' . $extension : '');
     }
 
     protected function getLocalProcessingMetaPath(string $cachedPath): string

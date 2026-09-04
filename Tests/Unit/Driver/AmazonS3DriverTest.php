@@ -15,7 +15,9 @@ namespace AUS\AusDriverAmazonS3\Tests\Unit\Driver;
 
 use AUS\AusDriverAmazonS3\Driver\AmazonS3Driver;
 use Aws\Api\DateTimeResult;
+use Aws\Command;
 use Aws\Result;
+use Aws\S3\Exception\S3Exception;
 use Aws\S3\S3Client;
 use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
@@ -309,7 +311,7 @@ class AmazonS3DriverTest extends TestCase
 
         $cacheDirectory = $this->useLocalProcessingCacheDirectory();
         $identifier = '/_processed_/csm_image_abc.jpg';
-        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/')) . '.jpg';
 
         $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
             $params = $args[0];
@@ -331,7 +333,7 @@ class AmazonS3DriverTest extends TestCase
     {
         $cacheDirectory = $this->useLocalProcessingCacheDirectory();
         $identifier = '/originals/photo.jpg';
-        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+        $expectedPath = $cacheDirectory . hash('sha256', ltrim($identifier, '/')) . '.jpg';
 
         $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
             $params = $args[0];
@@ -424,11 +426,97 @@ class AmazonS3DriverTest extends TestCase
     /**
      * @test
      */
+    public function layerBCachePathCarriesOriginalExtension(): void
+    {
+        $reflection = new \ReflectionMethod(AmazonS3Driver::class, 'getLocalProcessingCachePath');
+        $reflection->setAccessible(true);
+
+        $jpgPath = $reflection->invoke($this->driver, '/originals/photo.JPG');
+        $extensionlessPath = $reflection->invoke($this->driver, '/originals/plainfile');
+
+        // GraphicalFunctions::getImageDimensions() rejects paths without a known image
+        // extension, so the cached path must keep the (lowercased) extension. The hash
+        // itself is computed over the normalised identifier, which preserves case.
+        $this->assertStringEndsWith('.jpg', $jpgPath);
+        $this->assertSame(hash('sha256', 'originals/photo.JPG') . '.jpg', basename($jpgPath));
+        // Identifiers without an extension cannot gain one — they stay extensionless.
+        $this->assertSame(hash('sha256', 'originals/plainfile'), basename($extensionlessPath));
+    }
+
+    /**
+     * @test
+     */
+    public function missingObjectDoesNotLeaveUnreadableShellFile(): void
+    {
+        $this->useLocalProcessingCacheDirectory();
+        $identifier = '/_processed_/csm_missing_variant.jpg';
+
+        $backendRequest = $this->prophesize(ServerRequestInterface::class);
+        $backendRequest->getAttribute('applicationType')->willReturn(SystemEnvironmentBuilder::REQUESTTYPE_BE);
+        $GLOBALS['TYPO3_REQUEST'] = $backendRequest->reveal();
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args) {
+            $params = $args[0];
+            // The SDK may write the S3 error body (or an empty shell) into SaveAs before failing.
+            file_put_contents($params['SaveAs'], '<?xml version="1.0"?><Error><Code>NoSuchKey</Code></Error>');
+            throw new S3Exception(
+                'NoSuchKey',
+                new Command('GetObject'),
+                [],
+                new \Exception('404 Not Found', 404)
+            );
+        });
+
+        try {
+            $this->driver->getFileForLocalProcessing($identifier, false);
+            $this->fail('Expected RuntimeException for a missing object');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(1320577649, $e->getCode());
+        }
+
+        // Neither a cache entry nor an error-XML shell may remain for this identifier.
+        $reflection = new \ReflectionMethod(AmazonS3Driver::class, 'getLocalProcessingCachePath');
+        $reflection->setAccessible(true);
+        $cachePath = $reflection->invoke($this->driver, $identifier);
+        $this->assertFileDoesNotExist($cachePath);
+        $this->assertFileDoesNotExist($cachePath . '.meta');
+    }
+
+    /**
+     * @test
+     */
+    public function poisonedZeroByteCacheEntryIsHealedAndRefetched(): void
+    {
+        $cacheDirectory = $this->useLocalProcessingCacheDirectory();
+        $identifier = '/originals/photo.jpg';
+        $cachePath = $cacheDirectory . hash('sha256', ltrim($identifier, '/')) . '.jpg';
+
+        // Simulate a poisoned entry: 0-byte shell plus a meta that never captured etag/mtime.
+        mkdir($cacheDirectory, 0777, true);
+        file_put_contents($cachePath, '');
+        file_put_contents($cachePath . '.meta', json_encode(['etag' => null, 'mtime' => null, 'validatedAt' => time()]));
+
+        $this->s3Client->getObject(Argument::cetera())->will(function ($args): Result {
+            $params = $args[0];
+            file_put_contents($params['SaveAs'], 'healed-bytes');
+            return new Result(['ETag' => '"etag-1"', 'LastModified' => new DateTimeResult('2024-01-01T00:00:00Z')]);
+        });
+
+        $result = $this->driver->getFileForLocalProcessing($identifier, false);
+
+        $this->assertSame($cachePath, $result);
+        $this->assertFileExists($cachePath);
+        $this->assertSame('healed-bytes', file_get_contents($cachePath));
+    }
+
+    /**
+     * @test
+     */
     public function writableAccessAlwaysDownloadsFreshTempFile(): void
     {
         $cacheDirectory = $this->useLocalProcessingCacheDirectory();
         $identifier = '/originals/photo.jpg';
-        $cachePath = $cacheDirectory . hash('sha256', ltrim($identifier, '/'));
+        $cachePath = $cacheDirectory . hash('sha256', ltrim($identifier, '/')) . '.jpg';
 
         $this->eventDispatcher->dispatch(Argument::cetera())->will(function ($args) {
             return $args[0];
