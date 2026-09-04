@@ -22,12 +22,10 @@ use Aws\S3\S3Client;
 use Aws\S3\StreamWrapper;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
 use TYPO3\CMS\Core\Cache\CacheManager;
 use TYPO3\CMS\Core\Cache\Frontend\FrontendInterface;
 use TYPO3\CMS\Core\Configuration\ExtensionConfiguration;
 use TYPO3\CMS\Core\Core\Environment;
-use TYPO3\CMS\Core\Http\ApplicationType;
 use TYPO3\CMS\Core\Http\NormalizedParams;
 use TYPO3\CMS\Core\Http\Response;
 use TYPO3\CMS\Core\Log\LogLevel;
@@ -573,22 +571,19 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     public function getFileForLocalProcessing(string $fileIdentifier, bool $writable = true): string
     {
         // Read-only access resolution:
-        //  - Layer A (skip-download): identifiers under a configured prefix (default "_processed_/")
-        //    return their public URL directly — but ONLY in a frontend request, where the value
-        //    feeds the legacy ImageResource "fullPath" metadata (AssetCollector) and is never
-        //    byte-read. In backend/CLI the result IS byte-read (ImageInfo::getSize() in
-        //    LocalImageProcessor::checkForExistingTargetFile), and SplFileInfo::getSize() cannot
-        //    stat a public URL, so the URL is never returned there (see isFrontendSkipDownload()).
-        //  - Layer B (persistent cache): all other read-only access is served from a local cache,
-        //    revalidated against S3 according to the configured consistency mode ("strict" default).
+        //  - Layer B (persistent cache): read-only access is always served from a local cache
+        //    or a fresh download, revalidated against S3 according to the configured consistency
+        //    mode ("strict" default). The public URL is NEVER returned for an existing object:
+        //    the API contract guarantees a byte-readable local disk path, and TYPO3 byte-reads
+        //    the result in frontend requests as well — ImageInfo::getSize() in
+        //    LocalImageProcessor::checkForExistingTargetFile() runs when a processed object
+        //    exists without a sys_file_processedfile row, and returning a URL crashed the FE
+        //    with "SplFileInfo::getSize(): stat failed" (prod incident 2026-09-04). The former
+        //    Layer A (skip-download, FE-only URL return) was removed for exactly that reason;
+        //    the one-off ~5s first-render-after-cache-flush cost it saved is accepted
+        //    (see typo3-k8s ADR-0001 amendment).
         // Writable access always downloads a fresh, private temp file (original behaviour).
         if (!$writable) {
-            if ($this->isFrontendSkipDownload($fileIdentifier)) {
-                $publicUrl = $this->getPublicUrl($fileIdentifier);
-                if ($publicUrl !== null && $publicUrl !== '') {
-                    return $publicUrl;
-                }
-            }
             $cachedPath = $this->getCachedLocalProcessingPath($fileIdentifier);
             if ($cachedPath !== null) {
                 return $cachedPath;
@@ -802,8 +797,11 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
     }
 
     /**
-     * Read-only access under one of these (normalised) path prefixes returns the public URL without
-     * an S3 download. Default "_processed_/". Empty or "none" disables the skip layer.
+     * Read-only access to a MISSING object under one of these (normalised) path prefixes
+     * degrades to the public URL instead of throwing (stale sys_file_processedfile rows).
+     * Default "_processed_/". Empty or "none" disables that degradation. Since Layer A was
+     * removed this no longer influences downloads of existing objects — those are always
+     * served locally through the persistent cache (Layer B).
      *
      * @return string[]
      */
@@ -835,35 +833,6 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         return false;
     }
 
-    /**
-     * Like isLocalProcessingSkipDownload(), but additionally requires a frontend request: the
-     * public URL is only safe to return where the caller never byte-reads the result. Frontend
-     * rendering uses it as metadata-only ImageResource "fullPath"; backend/CLI byte-read it
-     * (ImageInfo/ImageMagick) and must receive a real local path.
-     */
-    protected function isFrontendSkipDownload(string $fileIdentifier): bool
-    {
-        return $this->isLocalProcessingSkipDownload($fileIdentifier) && $this->isFrontendRequest();
-    }
-
-    protected function isFrontendRequest(): bool
-    {
-        $request = $GLOBALS['TYPO3_REQUEST'] ?? null;
-        if (!$request instanceof ServerRequestInterface) {
-            return false;
-        }
-        try {
-            return ApplicationType::fromRequest($request)->isFrontend();
-        } catch (\Throwable $e) {
-            // No resolvable application type (early bootstrap / CLI without a request): stay safe
-            // and do NOT return a URL — fall back to a local path.
-            return false;
-        }
-    }
-
-    /**
-     * Cache consistency mode for layer B: "strict" (default), "bounded" or "eventual".
-     */
     protected function getLocalProcessingRevalidationMode(): string
     {
         $mode = (string)($this->configuration['localProcessingCacheRevalidation'] ?? 'strict');
