@@ -606,4 +606,56 @@ class AmazonS3DriverTest extends TestCase
         $this->assertFileExists($result);
         $this->assertSame('writable-bytes', file_get_contents($result));
     }
+
+    /**
+     * A concurrent request that finished the same processing task has already
+     * uploaded the object and removed the shared local temporary file. addFile()
+     * must accept that result instead of failing on filesize()/unlink() warnings
+     * of the vanished file (which TYPO3 escalates to exceptions mid-flow).
+     *
+     * @test
+     */
+    public function addFileToleratesVanishedLocalFileWhenTargetObjectWasUploadedConcurrently(): void
+    {
+        GeneralUtility::addInstance(
+            \TYPO3\CMS\Core\Charset\CharsetConverter::class,
+            new \TYPO3\CMS\Core\Charset\CharsetConverter(new \TYPO3\CMS\Core\Charset\CharsetProvider())
+        );
+        $this->s3Client->headObject(Argument::that(fn (array $args): bool => str_contains($args['Key'], 'csm_race.jpg')))
+            ->willReturn(new Result([
+                'LastModified' => new DateTimeResult('2026-09-24T15:00:00Z'),
+                'ContentLength' => 1234,
+                'ContentType' => 'image/jpeg',
+            ]));
+        $this->s3Client->headObject(Argument::that(fn (array $args): bool => !str_contains($args['Key'], 'csm_race.jpg')))
+            ->willThrow(new \RuntimeException('wrapped', 0, new \RuntimeException('Not Found', 404)));
+        $this->s3Client->upload(Argument::cetera())->shouldNotBeCalled();
+
+        $identifier = $this->driver->addFile('/does/not/exist/race-source.jpg', '_processed_/r/', 'csm_race.jpg', true);
+
+        self::assertSame('_processed_/r/csm_race.jpg', $identifier);
+    }
+
+    /**
+     * If the local file is gone AND the target object is missing from the
+     * bucket, addFile() must fail loudly instead of pretending success
+     * (which would create a sys_file_processedfile row without an object).
+     *
+     * @test
+     */
+    public function addFileThrowsWhenLocalFileVanishedAndTargetObjectIsMissing(): void
+    {
+        GeneralUtility::addInstance(
+            \TYPO3\CMS\Core\Charset\CharsetConverter::class,
+            new \TYPO3\CMS\Core\Charset\CharsetConverter(new \TYPO3\CMS\Core\Charset\CharsetProvider())
+        );
+        $this->s3Client->headObject(Argument::cetera())->willThrow(
+            new \RuntimeException('wrapped', 0, new \RuntimeException('Not Found', 404))
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionCode(2026092401);
+
+        $this->driver->addFile('/does/not/exist/race-source.jpg', '_processed_/r/', 'csm_race.jpg', true);
+    }
 }

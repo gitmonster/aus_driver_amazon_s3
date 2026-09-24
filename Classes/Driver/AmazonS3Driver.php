@@ -438,7 +438,25 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
         } else { // upload local file
             $this->normalizeIdentifier($targetIdentifier);
 
-            if (filesize($localFilePath) === 0) { // Multipart uploader would fail to upload empty files
+            $localFileSize = is_file($localFilePath) ? (int)filesize($localFilePath) : false;
+
+            if ($localFileSize === false) {
+                // A concurrent request finished the same processing task and already
+                // uploaded and removed the local temporary result file. Without this
+                // guard, filesize() and unlink() below emit PHP warnings on the vanished
+                // file, which TYPO3 converts to exceptions mid-flow. Such aborted runs
+                // leave sys_file_processedfile rows behind whose S3 objects were never
+                // (re-)created — the NoSuchKey orphans seen in production logs.
+                // Accept the concurrent request's result, but never pretend success
+                // when the target object is missing from the bucket.
+                if (!$this->objectExists($targetIdentifier)) {
+                    throw new \RuntimeException(
+                        'Local file "' . $localFilePath . '" is gone and target object "' . $targetIdentifier
+                        . '" does not exist in bucket "' . $this->configuration['bucket'] . '".',
+                        2026092401
+                    );
+                }
+            } elseif ($localFileSize === 0) { // Multipart uploader would fail to upload empty files
                 $this->s3Client->upload(
                     $this->configuration['bucket'],
                     $this->addBaseFolder($targetIdentifier),
@@ -455,7 +473,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
                 );
             }
 
-            if ($removeOriginal) {
+            if ($removeOriginal && is_file($localFilePath)) {
                 unlink($localFilePath);
             }
         }
@@ -545,7 +563,7 @@ class AmazonS3Driver extends AbstractHierarchicalFilesystemDriver implements Str
                             $this->deleteFolder($subFolder->getIdentifier(), $deleteRecursively);
                         }
                     } else {
-                        unlink($this->getStreamWrapperPath($object['Key']));
+                        @unlink($this->getStreamWrapperPath($object['Key']));
                     }
                 }
             }
